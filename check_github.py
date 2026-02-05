@@ -9,7 +9,8 @@ import re
 import csv
 import base64
 import requests
-from io import StringIO
+from io import StringIO, BytesIO
+from PIL import Image, ImageEnhance, ImageFilter
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_URL = "https://aki-kumazawa.com/_wp"
@@ -88,6 +89,35 @@ def save_last_max_id(max_id):
     print(f"last_max_id更新: {max_id}")
 
 
+def preprocess_captcha(image_bytes):
+    """CAPTCHA画像を前処理して認識精度を上げる"""
+    img = Image.open(BytesIO(image_bytes))
+
+    # グレースケール変換
+    gray = img.convert("L")
+
+    # コントラスト強調
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(1.8)
+
+    # 3倍リサイズ（高解像度化）
+    gray = gray.resize((gray.width * 3, gray.height * 3), Image.LANCZOS)
+
+    # 軽いぼかしでノイズ除去
+    gray = gray.filter(ImageFilter.GaussianBlur(radius=0.5))
+
+    # 二値化（閾値160）
+    img = gray.point(lambda x: 0 if x < 160 else 255)
+
+    # RGBに変換
+    img = img.convert("RGB")
+
+    # バイト列に変換
+    output = BytesIO()
+    img.save(output, format="PNG")
+    return output.getvalue()
+
+
 def recognize_captcha(image_bytes):
     """OpenAI GPT-5でCAPTCHA認識"""
     if not OPENAI_API_KEY:
@@ -100,8 +130,16 @@ def recognize_captcha(image_bytes):
         f.write(image_bytes)
     print(f"オリジナル画像保存: {original_path}")
 
-    # GPT-5は高性能なので前処理なしでそのまま送る
-    image_content = base64.b64encode(image_bytes).decode("utf-8")
+    # 画像前処理
+    processed_bytes = preprocess_captcha(image_bytes)
+
+    # 処理済み画像を保存
+    processed_path = os.path.join(SCRIPT_DIR, "captcha_processed.png")
+    with open(processed_path, "wb") as f:
+        f.write(processed_bytes)
+    print(f"処理済み画像保存: {processed_path}")
+
+    image_content = base64.b64encode(processed_bytes).decode("utf-8")
 
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -211,11 +249,19 @@ def download_csv(session):
     # デバッグ: HTMLの一部を表示
     if "_wpnonce" not in resp.text:
         print("DEBUG: _wpnonce がページに存在しない")
-        print(f"ページタイトル: {re.search(r'<title>([^<]*)</title>', resp.text)}")
+        title_match = re.search(r'<title>([^<]*)</title>', resp.text)
+        if title_match:
+            print(f"ページタイトル: {title_match.group(1)}")
         # HTMLを保存して確認
         with open("debug_page.html", "w", encoding="utf-8") as f:
             f.write(resp.text)
         print("debug_page.html に保存しました")
+        # HTMLの先頭部分をログに出力
+        print("=" * 50)
+        print("HTML内容（先頭2000文字）:")
+        print("=" * 50)
+        print(resp.text[:2000])
+        print("=" * 50)
 
     nonces = re.findall(r'name="_wpnonce"\s*value="([^"]+)"', resp.text)
     if not nonces:
