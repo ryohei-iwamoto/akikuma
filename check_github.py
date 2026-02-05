@@ -9,17 +9,64 @@ import re
 import csv
 import base64
 import requests
-from io import StringIO, BytesIO
-
-# 環境変数から設定取得
-BASE_URL = "https://aki-kumazawa.com/_wp"
-WP_USERNAME = os.environ.get("WP_USERNAME")
-WP_PASSWORD = os.environ.get("WP_PASSWORD")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN")
-LINE_TARGET_ID = os.environ.get("LINE_TARGET_ID")
+from io import StringIO
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_URL = "https://aki-kumazawa.com/_wp"
+
+
+def load_config():
+    """環境変数またはローカルファイルから設定を読み込む"""
+    config = {
+        "WP_USERNAME": os.environ.get("WP_USERNAME"),
+        "WP_PASSWORD": os.environ.get("WP_PASSWORD"),
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        "LINE_CHANNEL_TOKEN": os.environ.get("LINE_CHANNEL_TOKEN"),
+        "LINE_TARGET_ID": os.environ.get("LINE_TARGET_ID"),
+    }
+
+    # ローカルファイルから読み込み（環境変数が未設定の場合）
+    id_pass_file = os.path.join(SCRIPT_DIR, "id_pass.txt")
+    if os.path.exists(id_pass_file) and (not config["WP_USERNAME"] or not config["WP_PASSWORD"]):
+        with open(id_pass_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            for line in lines:
+                if "ユーザー名" in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        config["WP_USERNAME"] = parts[-1]
+                elif "パスワード" in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        config["WP_PASSWORD"] = parts[-1]
+
+    line_config_file = os.path.join(SCRIPT_DIR, "line_config.txt")
+    if os.path.exists(line_config_file):
+        with open(line_config_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if key == "CHANNEL_ACCESS_TOKEN" and not config["LINE_CHANNEL_TOKEN"]:
+                    config["LINE_CHANNEL_TOKEN"] = value
+                elif key == "TARGET_ID" and not config["LINE_TARGET_ID"]:
+                    config["LINE_TARGET_ID"] = value
+                elif key == "OPENAI_API_KEY" and not config["OPENAI_API_KEY"]:
+                    config["OPENAI_API_KEY"] = value
+
+    return config
+
+
+# 設定読み込み
+CONFIG = load_config()
+WP_USERNAME = CONFIG["WP_USERNAME"]
+WP_PASSWORD = CONFIG["WP_PASSWORD"]
+OPENAI_API_KEY = CONFIG["OPENAI_API_KEY"]
+LINE_CHANNEL_TOKEN = CONFIG["LINE_CHANNEL_TOKEN"]
+LINE_TARGET_ID = CONFIG["LINE_TARGET_ID"]
 STATE_FILE = os.path.join(SCRIPT_DIR, "last_max_id.txt")
 
 
@@ -47,24 +94,14 @@ def recognize_captcha(image_bytes):
         print("OPENAI_API_KEY未設定")
         return None
 
-    try:
-        from PIL import Image, ImageEnhance, ImageFilter
+    # オリジナル画像を保存
+    original_path = os.path.join(SCRIPT_DIR, "captcha_original.png")
+    with open(original_path, "wb") as f:
+        f.write(image_bytes)
+    print(f"オリジナル画像保存: {original_path}")
 
-        img = Image.open(BytesIO(image_bytes))
-        gray = img.convert('L')
-        enhancer = ImageEnhance.Contrast(gray)
-        gray = enhancer.enhance(1.8)
-        gray = gray.resize((gray.width * 3, gray.height * 3), Image.LANCZOS)
-        gray = gray.filter(ImageFilter.GaussianBlur(radius=0.5))
-        img = gray.point(lambda x: 0 if x < 160 else 255)
-        img = img.convert('RGB')
-
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-        image_content = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    except Exception as e:
-        print(f"画像処理エラー: {e}")
-        image_content = base64.b64encode(image_bytes).decode("utf-8")
+    # GPT-5は高性能なので前処理なしでそのまま送る
+    image_content = base64.b64encode(image_bytes).decode("utf-8")
 
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -160,8 +197,21 @@ def download_csv(session):
     url = f"{BASE_URL}/wp-admin/edit.php?post_type=mwf_285"
     resp = session.get(url)
 
+    print(f"CSV page URL: {resp.url}")
+    print(f"Status: {resp.status_code}")
+
     if "wp-login" in resp.url:
+        print("セッション切れ - 再ログインが必要")
         return None
+
+    # デバッグ: HTMLの一部を表示
+    if "_wpnonce" not in resp.text:
+        print("DEBUG: _wpnonce がページに存在しない")
+        print(f"ページタイトル: {re.search(r'<title>([^<]*)</title>', resp.text)}")
+        # HTMLを保存して確認
+        with open("debug_page.html", "w", encoding="utf-8") as f:
+            f.write(resp.text)
+        print("debug_page.html に保存しました")
 
     nonces = re.findall(r'name="_wpnonce"\s*value="([^"]+)"', resp.text)
     if not nonces:
