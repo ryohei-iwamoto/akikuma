@@ -1,0 +1,39 @@
+name: Check Form
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 10:00 JST
+    - cron: '0 8 * * *'   # 17:00 JST
+  workflow_dispatch:       # 手動実行用
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests Pillow
+
+      - name: Run check script
+        env:
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_PASSWORD: ${{ secrets.WP_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
+        run: python check_github.py
+
+      - name: Commit state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_max_id.txt || true
+          git diff --staged --quiet || git commit -m "Update last_max_id"
+          git push || true

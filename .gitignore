@@ -1,0 +1,8 @@
+# 機密情報（ローカル用）
+line_config.txt
+id_pass.txt
+wp_cookies.json
+
+# Python
+__pycache__/
+*.pyc
