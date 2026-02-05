@@ -73,7 +73,7 @@ def recognize_captcha(image_bytes):
             "Authorization": f"Bearer {OPENAI_API_KEY}"
         },
         json={
-            "model": "gpt-5-mini",
+            "model": "gpt-5",
             "messages": [{
                 "role": "user",
                 "content": [
