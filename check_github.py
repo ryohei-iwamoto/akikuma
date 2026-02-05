@@ -150,6 +150,10 @@ def auto_login(max_retries=3):
     for attempt in range(1, max_retries + 1):
         print(f"ログイン試行 {attempt}/{max_retries}")
         session = requests.Session()
+        # ブラウザのUser-Agentを設定
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
         login_url = f"{BASE_URL}/login_09645"
         resp = session.get(login_url)
 
